@@ -161,7 +161,7 @@ public void update(){
 
     User user1update=dao.get(user1.getId());
     checkSameUser(user1,user1update);
-    }
+}
 ```
 
 id를 제외한 모든 필드를 새롭게 바꾸며 user1과 업데이트가 적용된 user1update와 비교하는 것이 위 테스트 로직이다.
@@ -172,8 +172,7 @@ public void update(User user){
     "update users set name = ?, password = ?, level = ?, login = ?, "+
     "recommend = ? where id = ? ",user.getName(),user.getPassword(),
     user.getLevel().intValue(),user.getLogin(),user.getRecommend(),user.getId());
-    )
-    }
+}
 ```
 
 테스트코드 내용을 바탕으로 다음과 같은 실제 Dao 메서드를 추가한다.
@@ -948,3 +947,372 @@ public void upgradeLevels() {
     }
 }
 ```
+
+그리고 앞서 말했던 JTA, Hibernate 등 글로벌 트랜잭션 및 데이터 액세스 기술을 유연하게 적용하려면 다음과 같이 사용할 수 있다.
+
+```java
+public class UserService {
+    private PlatformTransactionManager transactionManager;
+    
+    // new JTATranscationManger() 등 외부로 부터 사용할 기술을 주입받는다.
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+    
+    public void upgradeLevels() {
+      TransactionStatus stats = this.transactionManager
+              .getTransaction(new DefaultTransactionDefinition());
+      try {
+          // ...
+      }
+      
+      // ...
+    }
+}
+```
+
+# 5.3 서비스 추상화와 단일 책임 원칙
+
+방금까지 살펴본 코드로 스프링의 트랜잭션 서비스 추상화 기법을 적용함으로써 트랜잭션 기술을 일관된 방식으로 제어할 수 있게 되었다.
+
+![img.png](chapter5-7.png)
+
+- UserService는와 UserDao는 애플리케이션의 로직을 담고 있는 [애플리케이션 로직이다.]
+- UserDao는 DB 연결을 생성하는 방법에 독립적이다.
+- UserService와 트랜잭션 기술 간의 계층도 서로 독립적이다.
+
+## 단일 책임 원칙
+
+> 하나의 모듈은 한 가지 책임을 가져야한다.
+
+기존 UserService에 JDBC Conneciton 메서드를 직접 사용하는 코드가 있었을 때는
+
+UserService가 어떻게 **사용자 레벨을 관리할 것**인가, **어떻게 트랜잭션을 관리할 것**인가 라는 두 가지 책임을 가졌다.
+
+> 두 가지 책임이라는 것은 코드가 수정되는 이유가 두 가지라는 것이다.
+
+사용자 레벨 업그레이드 정책 변경 -> UserService 수정
+
+데이터 접근 기술 JDBC -> JTA로 변경 -> UserService 수정 
+
+## 단일 책임 원칙의 장점
+
+변경이 필요할 때 수정 대상이 명확해진다.
+
+위 상황에서도, 단일 책임 원칙이 적용됐다면, 데이터 접근 기술 변경 시 UserSerivce가 아닌
+
+데이터 접근 기술을 담당하는 코드를 수정하면 된다는 것을 확실하게 인지할 수 있다.
+
+단일 책임 원칙은 코드의 규모가 커질 수록, 의존관계까 복잡해질수록 그 장점이 더 부각된다.
+
+만약, SRP가 적용되지 않았을 때 JDBC에서 JTA로 트랜잭션 기술이 변경된다 하면
+
+(서비스 클래스 수 * 트랜잭션을 사용하는 메서드 수) 만큼의 코드를 수정해야할 것이다.
+
+따라서 적절한 책임을 부여하고 관심사를 분리하여 서로 영향을 주지 않도록 **추상화**를 해야한다.
+
+> 여기서 Spring은 자체적인 DI기술을 지원하여 보다 더 명료하게 추상화를 사용할 수 있다.
+
+```java
+public class UserService {
+  // 이게 아니라
+  private PlatformTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+
+  // 이렇게 사용할 수 있는 이유는 Spring의 DI 덕분이다!
+  private PlatformTransactionManager transactionManager;
+  
+}
+```
+
+Spring은 구현체 클래스를 명시하지 않아도 외부로부터 주입받아 추상화를 사용할 수 있도록 도와준다.
+
+---
+
+> 객체지향 설계와 프로그래밍의 원칙은 긴밀하다.
+
+SRP를 잘 지키려면 인터페이스를 도입하고 DI로 연결해야한다.
+
+그 결과로 OCP원칙도 잘 지켜지고, 모듈간의 결합도도 낮아진다.
+
+
+# 5.4 메일 서비스 추상화
+
+### 새로운 요구사항 등장 - 레벨 업그레이드 시 메일 발송
+
+- User객체에 email 필드 추가
+
+- UserService의 upgradeLevel() 메서드에 메일 발송 기능 추가
+
+- UserDao의 insert(), update() 메서드에 email 필드 추가
+
+### JavaMail을 활용, 전형적인 메일 발송 메서드
+```java
+import java.util.Properties;
+
+public class UserService {
+    
+    private void sendUpgradeEmail(User user) {
+        Properties props = new Properties();
+        props.put("mail.smtp.host", "mail.ksug.org");
+        Session s = Session.getInstance(props, null);
+        
+        MimeMessage message = new MimeMessage(s);
+        
+        try {
+          ...
+        } catch() {
+          ...
+        }
+    }
+}
+```
+
+이 코드에서 고려되는 사항은 다음과 같다.
+
+- 만약 이 메서드를 만들었는데 메일 서버가 준비되어 있지 않으면 어떻게 될까?
+
+- 기능 테스트를 위해 매번 이메일을 보내는건 바람직한가?
+
+이 사항들을 품기 위해서 다른 방법이 있긴하다.
+
+- 테스트용 메일을 만들어서 거기에다가 보내는 것은 어떨까?
+
+- 테스트 때는 메일 서버 설정을 변경하여 테스트용으로 준비된 메일 서버를 사용한다.
+
+메일 전송 테스트 시, 테스트 전용 메일 서버에 요청이 전달되기만 한다면 그 이후의 일은 JavaMail에게 맡겨보는 것이 좋은 방법이 될수도있다.
+
+# 5.4.3 테스트를 위한 서비스 추상화
+
+JavaMail은 인터페이스로 만들어져 구현을 바꿀 수 있는 내용이 없다.
+
+JavaMail은 Session 오브젝트를 만들어야 메일 메세지를 만들고 전송할 수 있다.
+
+하지만, Session은 인터페이스가 아닌 클래스이고, 생성자가 모두 private이기 때문에 직접 생성도 불가능하다.
+
+결론적으로는 JavaMail의 구현을 테스트용으로 바꿔치기 하는 방법은 불가능하다.
+
+그래도 아직 한 가지 방법은 남아있다.
+
+### 서비스 추상화를 적용하여 테스트용 JavaMail을 만들어보기
+
+Spring은 기존 JavaMail이 테스트하기 어려운 이유를 보완하기 위해 JavaMail에 대한 추상화를 제공한다.
+
+코드는 다음과 같다.
+
+```java
+public interface MailSender {
+    void send(SimpleMailMessage simpleMailMessage) throws MailException;
+    void send(SimpleMailMessage[] simpleMailMessages) throws MailException;
+}
+```
+
+또한 구현체까지 제공되어 있기 때문에 구현체를 사용하는 코드는 다음과 같다.
+
+```java
+public class UserService {
+    
+    private void sendUpgradeEmail(User user) {
+        JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
+        mailSender.setHosdt("mail.server.com");
+        
+        SimpleMailMessage mailMessage = new SimpleMailMessage();
+        mailMessage.setTo(user.getEmail());
+        mailMessage.setFrom("adminEmail@gmail.com");
+        mailMessage.setSubject("메일 제목 - 계정 업그레이드 !!");
+        mailMessage.setText("등업 해드렸어용");
+
+        mailSender.send(mailMessage);
+    }    
+}
+```
+
+스프링이 추상화 해놓은 덕분에 try catch 구문도 사라지고 간편하게 사용할 수 있게 되었다.
+
+raw한 JavaMail API를 썼을 때와 굉장히 큰 차이가 있다.
+
+하지만 JavaMail API를 사용하지 않는 테스트용 오브젝트로 대체할 수 없다는 점은 유효하다.
+
+그래도 우리에게는 스프링이 지원하는 DI가 있다. 이를 통해서 다음과 같이 해결할 수 있다.
+
+```java
+@RequiredArgsConstructor
+public class UserService {
+
+    private final MailSender mailSender;
+
+    private void sendUpgradeEmail(User user) {
+      JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
+      mailSender.setHosdt("mail.server.com");
+
+      SimpleMailMessage mailMessage = new SimpleMailMessage();
+      mailMessage.setTo(user.getEmail());
+      mailMessage.setFrom("adminEmail@gmail.com");
+      mailMessage.setSubject("메일 제목 - 계정 업그레이드 !!");
+      mailMessage.setText("등업 해드렸어용");
+
+      mailSender.send(mailMessage);
+    }
+}
+
+public class DummyMailSender implements MailSender {
+    
+    @Override
+    public void send(SimpleMailMessage mailMessage) throws MailException {
+    }
+
+    @Override
+    public void send(SimpleMailMessage[] mailMessage) throws MailException {
+    }
+}
+```
+
+이렇게 아무런 기능이 없는 MailSender 구현체를 만들어 주입하면 테스트용 MailSender가 완성된 것이다.
+
+![img.png](chapter5-10.png)
+
+완성된 MailSender의 추상화 구조이다. 기존 JavaMail을 그대로 사용하던 흐름을
+
+추상화하여 보다 유연하게 사용할 수 있게 된 구조로 변경되었다.
+
+# 5.4.4 테스트 대역
+
+지금까지 테스트를 위한 로직을 이것저것 만들어봤으니 실제 테스트를 수행할 때 어떤 방식으로 수행되는지 그림으로 보면 다음과 같다.
+
+![img.png](chapter5-11.png)
+
+UserDaoTest는 UserDao가 어떻게 공작하는지에만 관심을 갖고, 그 뒤에 위치한 DB 커넥션 풀이나 DB에 관심을 갖지 않는 구조를 가진다.
+
+![img.png](chapter5-12.png)
+
+UserService의 테스트 구조는 다음과 같다. 메일 전송 테스트를 위해 실제 MailSender를 의존하는 것이 아니라
+
+테스트용으로 만들어둔 DummyMailSender를 의존하는 모습을 볼 수있다.
+
+## 테스트 대역의 종류와 특징
+
+### Stub
+
+이렇게 테스트용으로 사용되는 특별한 객체들이 있다. 이렇게 테스트 환경을 만들어주고, 테스트 대상이 되는 객체의 기능만 충실하게 수행하여
+
+빠르고 빈번하게 테스트를 실행할 수 있는 객체들을 "**테스트 대역(Test Double)**"이라고 부른다.
+
+그 중 대표적인 테스트 대역은 **테스트 스텁(Test Stub)**이다. 테스트 스텁은 테스트 대상 객체의 의존객체로서 존재하며 테스트 간 코드가 정상적으로 수행할 수 있도록 도와주는 것을 말한다.
+
+**DummyMailSender**가 그 예시이다.
+
+### Mock
+
+테스트는 어떤 시스템에 입력을 주었을 때 기대하는 출력이 나오는지 검증한다.
+
+이럴 때 Stub을 활용하면 간접적인 입력 값을 지정해 줄 수 있다.
+
+DummyMailSender는 테스트 객체에 리턴해주는 것은 없지만, UserService로 부터 전달받는 내용은 존재한다.
+
+그런데 만약, 테스트 대상 오브젝트의 메서드에서 리턴값 뿐만 아니라 테스트 객체가 간접적으로 의존 객체를 다루는 행위에 대해서 테스트를 하고 싶을 땐 어떻게 해야할까?
+
+이럴 때는 테스트 대상 객체와 의존 객체 사이의 일어나는 일을 검증할 수 있도록 설계된 목(Mock) 객체를 사용해야한다.
+
+> Mock 객체는 Stub처럼 테스트 객체가 실행될 수 있도록 도와주고, 테스트 객체와 자신의 커뮤니케이션 내용을 검증하는데 도움을 준다.
+
+![img.png](chapter5-13.png)
+
+---
+
+# 이렇게 용어 정리를 해도 되나요?!
+
+- 테스트 대상 오브젝트 : Stub
+
+- 테스트 대상과 의존/협력 하는 오브젝트 : Mock
+
+---
+
+다음은 목 객체로 만든 메일 전송 확인용 클래스이다.
+
+```java
+import java.util.ArrayList;
+
+static class MockMailSender implements MailSender { 
+    private List<String> requests = new ArrayList<>();
+    public List<String> getRequests() {
+        return requests;
+    }
+    
+    @Override
+    public void send(SimpleMailMessage mailMessage) throws MailException {
+        requests.add(mailMessage.getTo()[0]);
+    }
+
+    @Override
+    public void send(SimpleMailMessage[] mailMessage) throws MailException {
+    }
+}
+```
+
+MockMailSender와 DummyMailSender는 거의 똑같다.
+
+이를 활용해 실제 테스트를 만들어보면 다음과 같다.
+
+```java
+class UserServiceTest {
+    
+    @Test
+    @DirteiesContext // 컨텍스트의 DI 설정을 변경하는 테스트임을 알린다.
+    public void upgradeLevels() throws Exception {
+        userDao.deleteAll();
+        for (User user : users) userDao.add(user); // 테스트하기 위한 유저의 수는 5명이다!
+        
+        MockMailSender mockMailSender = new MockMailSender();
+        userService.setMailSender(mockMailSender);
+        
+        userService.upgradeLevels();
+        
+        checkLevelUpgraded(users.get(0), false);
+        checkLevelUpgraded(users.get(1), true); // 업그레이드 대상
+        checkLevelUpgraded(users.get(2), false);
+        checkLevelUpgraded(users.get(3), true);
+        checkLevelUpgraded(users.get(4), false); // 업그레이드 대상
+        
+        List<String> request = mockMailSender.getRequests(); // 수신자 메일 주소가 담긴 리스트
+        assertThat(request.size(), is(2));
+        assertThat(request.get(0), is(users.get(1).getEmail()));
+        assertThat(request.get(1), is(users.get(3).getEmail()));
+    }
+}
+```
+
+이 코드가 말하고자 하는 흐름은 다음과 같다.
+
+- 기존 DummyMailSender를 대신하여 사용할 새로운 목 객체를 준비한다.
+
+- userService.upgradeLevels() 를 호출하면 MockMailSender의 send() 메서드가 호출 된다.
+
+- send()메서드가 호출되면 그때 수신인 정보에 들어있던 메일 주소가 추가 되었을 것이다.
+
+- 수신인은 두 번째와 네 번째 사용자를 셋팅했다.
+
+- 검증 방법은 수신인 리스트의 크기를 확인한 후
+  - 리스트의 첫 번째 메일 주소와 두 번째 사용자의 메일 주소를 비교한다.
+  - 그리고 두 번째 메일 주소와 네 번째 메일 주소가 같은지 비교한다.
+
+이렇게 하면 테스트는 성공한다~
+
+---
+
+# 정리
+
+- 비즈니스 로직은 데이터 액세스 로직과 철저하게 분리되어야한다.
+  - 비즈니스 로직 또한 내부적으로 책임/역할에 따라 메서드로 정리되어야한다.
+- DAO의 기술 변화에 서비스 계층이 영향 받아선 안된다. 인터페이스와 DI를 활용하여 결합도를 낮추자.
+- DAO를 사용하는 비즈니스 로직에서는 단위 작업을 보장하는 트랜잭션이 필요하다.
+- 트랜잭션의 시작/종료를 지정하는 일을 트랜잭션 경계설정이라고 한다.
+  - 트랜잭션 경계설정은 비즈니스 로직 안에서 일어나는 경우가 많다.
+- 트랜잭션 시작 정보를 담은 객체를 파라미터를 통해 DAO로 전달하는 것은 비효율적이다. 스프링이 제공하는 트랜잭션 동기화 기법을 사용하자.
+- 환경과 서버에 따라 트랜잭션 방법이 변경된다면, 경계설정 코드도 함께 변경되어야한다.
+- 트랜잭션 방법에 따라 비즈니스 로직이 변한다면 SRP에 위배된다. DAO가 특정 기술에 대한 강한 결합을 나타내고 있는 것이다.
+- 트랜잭션 경계썰정 코드가 비즈니스 로직 코드에 영향을 주지 않게 하려면 스프링이 제공하는 트랜잭션 서비스 추상화를 이용하자.
+- 서비스 추상화는 하위 레벨의 트랜잭션 기술과 API의 변화에 상관없이 일관된 API를 가진 추상화 계층을 도입한다.
+  - 이리저리 유연하게 다루기 힘든걸 추상화로 빼낸 것!
+- 서비스 추상화는 테스트하기 어려운 기술에도 적용 가능하다. (ex) JavaMail)
+- 테스트 대상이 사용하는 의존 객체를 대체할 수 있도록 만든 객체를 테스트 대역이라고한다.
+- 테스트 대역은 테스트 대상 객체가 동작할 수 있도록 하며 테스트를 위해 간접적인 정보를 제공한다.
+- 테스트 대역 중 테스트 대상으로부터 전달받은 정보를 검증하도록 돕는 것은 목 객체라고 한다.
