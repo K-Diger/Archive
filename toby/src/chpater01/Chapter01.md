@@ -142,7 +142,7 @@ package com.example.tobyspring.chapter01;
 
     import java.sql.SQLException;
 
-public class Main {
+public class 폰켓몬.Main {
 
     public static void main(String[] args) throws SQLException, ClassNotFoundException {
         UserDao dao = new UserDao();
@@ -633,7 +633,7 @@ package com.example.tobyspring.chapter01;
 
 import java.sql.SQLException;
 
-public class Main {
+public class 폰켓몬.Main {
 
     public static void main(String[] args) throws SQLException, ClassNotFoundException {
         ConnectionMaker connectionMaker = new DConnectionMaker();
@@ -699,7 +699,7 @@ UserDao를 사용하는 클라이언트에서 니즈에 따라 바꿔 끼워주�
 <details>
 <summary><h2>13. 전략 패턴은 무엇인가? p.87</h2></summary>
 
-Main - UserDao - ConnectionMaker는 전략패턴에 해당한다.
+폰켓몬.Main - UserDao - ConnectionMaker는 전략패턴에 해당한다.
 
 전략 패턴은 자신의 기능 컨텍스트에서, 필요에 따라 변경이 필요한 로직을 인터페이스를 통해 외부로 분리시켜
 

@@ -15,7 +15,7 @@ private var count: Int = 0
 private val operation: Array<Int> = arrayOf(1, 2)
 
 fun main() {
-    val (a: Int, k: Int) = br.readLine().split(" ").map { it -> it.toInt() }
+    val (a: Int, k: Int) = br.readLine().split(" ").map { it.toInt() }
     graph = Array(k) { 0 }
     visited = Array(k) { false }
     bfs(a, k)
